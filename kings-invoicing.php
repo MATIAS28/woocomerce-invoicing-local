@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Kings of PC – Invoicing
  * Description: Simple in-store point of sale: builds the sale, prints a receipt and decreases WooCommerce stock.
- * Version: 0.5.6
+ * Version: 0.5.7
  * Author: Kings of PC
  * Requires PHP: 7.4
  * Requires Plugins: woocommerce
