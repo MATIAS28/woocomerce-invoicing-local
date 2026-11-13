@@ -36,7 +36,7 @@ class KOP_Ajax {
 		}
 
 		$found = wc_get_products( array(
-			'status' => 'publish',
+			'status' => 'any',
 			'limit'  => 12,
 			's'      => $term,
 			'type'   => array_merge( array_keys( wc_get_product_types() ), array( 'variation' ) ),
