@@ -14,7 +14,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'KOP_INV_VERSION', '0.5.6' );
+define( 'KOP_INV_VERSION', '0.5.7' );
 define( 'KOP_INV_DIR', plugin_dir_path( __FILE__ ) );
 define( 'KOP_INV_URL', plugin_dir_url( __FILE__ ) );
 define( 'KOP_INV_CAP', 'manage_woocommerce' );
