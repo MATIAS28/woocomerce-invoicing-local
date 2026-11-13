@@ -7,6 +7,7 @@
  * Requires PHP: 7.4
  * Requires Plugins: woocommerce
  * Text Domain: kings-invoicing
+ * GitHub Plugin URI: https://github.com/MATIAS28/woocommerce-invoicing-local
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
