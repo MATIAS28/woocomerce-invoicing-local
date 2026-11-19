@@ -23,7 +23,7 @@ class KOP_Ajax {
 	}
 
 	/** Fila de producto que entiende el POS (la misma forma para el catálogo y para la búsqueda). */
-	private static function row( $id, $name, $sku, $web, $manage, $stock, $img, $cats ) {
+	private static function row( $id, $name, $sku, $web, $manage, $stock, $img, $cats, $status = 'publish' ) {
 		return array(
 			'id'     => (int) $id,
 			'name'   => wp_strip_all_tags( (string) $name ),
@@ -34,6 +34,7 @@ class KOP_Ajax {
 			'stock'  => $manage ? (int) $stock : null,
 			'img'    => $img ? (string) $img : '',
 			'cats'   => (string) $cats,
+			'status' => (string) $status, // publish, draft, pending, private o future
 		);
 	}
 
@@ -46,14 +47,16 @@ class KOP_Ajax {
 		self::verify();
 		global $wpdb;
 
-		// Productos publicados y variaciones cuyo producto padre está publicado.
-		$posts = $wpdb->get_results(
-			"SELECT p.ID, p.post_parent, p.post_type, p.post_title
+		// Productos en cualquier estado (publicado, borrador, pendiente, privado, programado), menos la papelera.
+		// Las variaciones, si su producto padre tampoco está en la papelera.
+		$statuses = kop_inv_sellable_statuses_sql();
+		$posts    = $wpdb->get_results(
+			"SELECT p.ID, p.post_parent, p.post_type, p.post_title, p.post_status, pp.post_status AS parent_status
 			 FROM {$wpdb->posts} p
 			 LEFT JOIN {$wpdb->posts} pp ON pp.ID = p.post_parent
-			 WHERE p.post_status = 'publish'
+			 WHERE p.post_status IN ( $statuses )
 			   AND ( p.post_type = 'product'
-			      OR ( p.post_type = 'product_variation' AND pp.post_type = 'product' AND pp.post_status = 'publish' ) )"
+			      OR ( p.post_type = 'product_variation' AND pp.post_type = 'product' AND pp.post_status IN ( $statuses ) ) )"
 		);
 		if ( ! $posts ) {
 			wp_send_json_success( array( 'products' => array(), 'discount' => kop_inv_local_discount() ) );
@@ -65,7 +68,7 @@ class KOP_Ajax {
 			"SELECT m.post_id, m.meta_key, m.meta_value
 			 FROM {$wpdb->postmeta} m
 			 INNER JOIN {$wpdb->posts} p ON p.ID = m.post_id
-			 WHERE p.post_type IN ( 'product', 'product_variation' ) AND p.post_status = 'publish'
+			 WHERE p.post_type IN ( 'product', 'product_variation' ) AND p.post_status IN ( $statuses )
 			   AND m.meta_key IN ( '_sku', '_price', '_manage_stock', '_stock', '_thumbnail_id' )"
 		);
 		foreach ( $rows as $r ) {
@@ -159,7 +162,9 @@ class KOP_Ajax {
 				$manage,
 				(int) round( (float) $stock ),
 				$img( $thumb ),
-				implode( ' ', $cat_names )
+				implode( ' ', $cat_names ),
+				// Una variación muestra el estado del padre si el padre no está publicado.
+				( $is_var && 'publish' !== $p->parent_status ) ? $p->parent_status : $p->post_status
 			);
 		}
 
@@ -213,7 +218,7 @@ class KOP_Ajax {
 			 FROM {$wpdb->posts} p
 			 LEFT JOIN {$wpdb->postmeta} m ON m.post_id = p.ID AND m.meta_key = '_sku'
 			 WHERE p.post_type IN ( 'product', 'product_variation' )
-			   AND p.post_status = 'publish'
+			   AND p.post_status IN ( " . kop_inv_sellable_statuses_sql() . " )
 			   AND " . implode( ' AND ', $where ) . "
 			 ORDER BY ( p.post_title LIKE %s ) DESC, CHAR_LENGTH( p.post_title ) ASC
 			 LIMIT 30",
@@ -232,17 +237,18 @@ class KOP_Ajax {
 			}
 			$product = wc_get_product( $id );
 
-			// Solo se vende lo publicado; de las variaciones se vende la variación, no el producto padre.
-			if ( ! $product || $product->is_type( array( 'variable', 'grouped' ) ) || 'publish' !== $product->get_status() ) {
+			// Cualquier estado menos la papelera; de las variaciones se vende la variación, no el producto padre.
+			if ( ! $product || $product->is_type( array( 'variable', 'grouped' ) ) || ! kop_inv_is_sellable( $product ) ) {
 				continue;
 			}
 			$cat_id = $product->get_id();
+			$status = $product->get_status();
 			if ( $product->is_type( 'variation' ) ) {
 				$parent = wc_get_product( $product->get_parent_id() );
-				if ( ! $parent || 'publish' !== $parent->get_status() ) {
-					continue;
-				}
 				$cat_id = $parent->get_id();
+				if ( 'publish' !== $parent->get_status() ) {
+					$status = $parent->get_status();
+				}
 			}
 
 			$out[] = self::row(
@@ -253,7 +259,8 @@ class KOP_Ajax {
 				$product->managing_stock(),
 				$product->get_stock_quantity(),
 				wp_get_attachment_image_url( $product->get_image_id(), 'woocommerce_thumbnail' ),
-				implode( ' ', wp_get_post_terms( $cat_id, 'product_cat', array( 'fields' => 'names' ) ) )
+				implode( ' ', wp_get_post_terms( $cat_id, 'product_cat', array( 'fields' => 'names' ) ) ),
+				$status
 			);
 		}
 

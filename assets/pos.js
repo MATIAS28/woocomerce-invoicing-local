@@ -201,6 +201,9 @@
         });
     }
 
+    var STATUS_LABELS = { draft: 'Borrador', pending: 'Pendiente', 'private': 'Privado', future: 'Programado' };
+    function statusLabel(s) { return STATUS_LABELS[s] || s; }
+
     function stockLabel(p) {
         if (!p.manage) { return ''; }
         return p.stock > 0 ? ' · stock ' + p.stock : ' · sin stock';
@@ -224,13 +227,18 @@
             if (p.web > p.price) { $meta.append($('<del class="kop-web-price">').text(fmt(p.web)), ' '); }
             $meta.append($('<b>').text(fmt(p.price)), document.createTextNode(stockLabel(p)));
 
+            var $name = $('<b class="kop-result__name">').text(p.name);
+            if (p.status && p.status !== 'publish') {
+                $name.prepend($('<span class="kop-status-tag">').text(statusLabel(p.status)), ' ');
+            }
+
             var $li = $('<li class="kop-result">').attr('data-i', i).append(
                 $('<img class="kop-result__img">')
                     .attr('src', p.img || '')
                     .attr('alt', '')
                     .attr('loading', 'lazy'),
                 $('<div class="kop-result__body">').append(
-                    $('<b class="kop-result__name">').text(p.name),
+                    $name,
                     $meta
                 )
             );

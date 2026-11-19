@@ -327,15 +327,10 @@ class KOP_Sales {
                 return new WP_Error( 'line', 'Hay una línea inválida en la venta.' );
             }
 
-            // Solo se venden productos publicados (y variaciones cuyo producto padre está publicado).
-            // El catálogo del POS se carga al abrir la pantalla: esto cubre lo despublicado después.
-            $published = ( 'publish' === $product->get_status() );
-            if ( $published && $product->is_type( 'variation' ) ) {
-                $parent    = wc_get_product( $product->get_parent_id() );
-                $published = $parent && 'publish' === $parent->get_status();
-            }
-            if ( ! $published ) {
-                return new WP_Error( 'unpublished', sprintf( 'El producto "%s" ya no está publicado: quitalo del carrito.', wp_strip_all_tags( $product->get_name() ) ) );
+            // Se vende cualquier producto (publicado o no), menos los que están en la papelera.
+            // El catálogo del POS se carga al abrir la pantalla: esto cubre lo borrado después.
+            if ( ! kop_inv_is_sellable( $product ) ) {
+                return new WP_Error( 'trashed', sprintf( 'El producto "%s" está en la papelera: quitalo del carrito.', wp_strip_all_tags( $product->get_name() ) ) );
             }
 
             // Precio: el servidor calcula el precio del local (web - descuento) con el precio ACTUAL de WooCommerce.

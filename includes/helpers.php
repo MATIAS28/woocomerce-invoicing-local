@@ -63,6 +63,30 @@ function kop_inv_local_price( $web ) {
 }
 
 /**
+ * Estados de producto que el POS puede vender: todos menos la papelera (y los borradores automáticos).
+ */
+function kop_inv_sellable_statuses() {
+	return array( 'publish', 'draft', 'pending', 'private', 'future' );
+}
+
+/** Los estados vendibles listos para un IN (...) de SQL (son valores fijos, no vienen del usuario). */
+function kop_inv_sellable_statuses_sql() {
+	return "'" . implode( "','", kop_inv_sellable_statuses() ) . "'";
+}
+
+/** ¿Se puede vender este producto? Una variación también necesita que su producto padre se pueda vender. */
+function kop_inv_is_sellable( $product ) {
+	if ( ! $product instanceof WC_Product || ! in_array( $product->get_status(), kop_inv_sellable_statuses(), true ) ) {
+		return false;
+	}
+	if ( $product->is_type( 'variation' ) ) {
+		$parent = wc_get_product( $product->get_parent_id() );
+		return $parent && in_array( $parent->get_status(), kop_inv_sellable_statuses(), true );
+	}
+	return true;
+}
+
+/**
  * Format an amount as currency, e.g. "$ 1.234,50".
  */
 function kop_inv_money( $n ) {
