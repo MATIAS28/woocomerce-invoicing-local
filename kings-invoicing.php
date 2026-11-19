@@ -2,19 +2,19 @@
 /**
  * Plugin Name: Kings of PC – Invoicing
  * Description: Simple in-store point of sale: builds the sale, prints a receipt and decreases WooCommerce stock.
- * Version: 0.6.0
+ * Version: 0.6.1
  * Author: Kings of PC
  * Requires PHP: 7.4
  * Requires Plugins: woocommerce
  * Text Domain: kings-invoicing
- * GitHub Plugin URI: https://github.com/MATIAS28/woocommerce-invoicing-local
+ * GitHub Plugin URI: https://github.com/MATIAS28/woocomerce-invoicing-local
  */
 
 if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'KOP_INV_VERSION', '0.6.0' );
+define( 'KOP_INV_VERSION', '0.6.1' );
 define( 'KOP_INV_DIR', plugin_dir_path( __FILE__ ) );
 define( 'KOP_INV_URL', plugin_dir_url( __FILE__ ) );
 define( 'KOP_INV_CAP', 'manage_woocommerce' );
