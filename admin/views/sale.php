@@ -46,6 +46,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 						<ul id="kop-results" class="kop-results" style="display:none"></ul>
 					</div>
 				</div>
+				<p id="kop-catalog-status" class="kop-catalog-status"></p>
 
 				<table class="widefat kop-items" id="kop-items">
 					<thead>

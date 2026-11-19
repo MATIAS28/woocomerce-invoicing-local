@@ -80,7 +80,14 @@ if ( ! defined( 'ABSPATH' ) ) {
                     <p class="description">Una por línea: <code>Nombre|porcentaje</code>. Positivo = recargo, negativo = descuento. Ej: <code>Efectivo|-10</code></p>
                 </td>
             </tr>
-            
+            <tr>
+                <th>Descuento venta en local (%)</th>
+                <td>
+                    <input type="text" inputmode="decimal" style="width:80px" name="kop_inv_opts[local_discount]" value="<?php echo esc_attr( kop_inv_opt( 'local_discount' ) ); ?>"> %
+                    <p class="description">Se descuenta al precio de la web en todas las ventas del POS (X y C) y el resultado se redondea a pesos enteros. Ej: con 9, un producto de $ 219.780 en la web se vende a $ 200.000. Poné 0 para vender al precio de la web.</p>
+                </td>
+            </tr>
+
             <tr>
               <th>Estado que dispara la factura</th>
             <td>

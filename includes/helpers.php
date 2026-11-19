@@ -22,6 +22,7 @@ function kop_inv_defaults() {
 		'logo_url'        => '',
 		'invoice_status'  => 'completed', // order status that makes the invoicing plugin issue the invoice
 		'crp_tax_id_key'  => '',          // order meta key where the invoicing plugin reads the customer tax ID
+		'local_discount'  => 9,           // % que se descuenta al precio web en las ventas del local (0 = sin descuento)
 	);
 }
 
@@ -31,6 +32,34 @@ function kop_inv_defaults() {
 function kop_inv_opt( $key ) {
 	$opts = wp_parse_args( get_option( 'kop_inv_opts', array() ), kop_inv_defaults() );
 	return isset( $opts[ $key ] ) ? $opts[ $key ] : '';
+}
+
+/**
+ * % de descuento para la venta en el local (el precio web incluye la comisión de Mercado Pago).
+ */
+function kop_inv_local_discount() {
+	return min( 90, max( 0, (float) kop_inv_opt( 'local_discount' ) ) );
+}
+
+/**
+ * Precio web (el guardado en WooCommerce, sin filtros de otros plugins) de un producto.
+ * Es la única fuente de precio del POS: la usan el catálogo, el buscador y el guardado de la venta.
+ */
+function kop_inv_web_price( $product ) {
+	return $product instanceof WC_Product ? max( 0, (float) $product->get_price( 'edit' ) ) : 0.0;
+}
+
+/**
+ * Precio de venta en el local: precio web menos el descuento configurado, redondeado a pesos enteros.
+ * Sin descuento configurado, el precio web queda igual.
+ */
+function kop_inv_local_price( $web ) {
+	$web = max( 0, (float) $web );
+	$pct = kop_inv_local_discount();
+	if ( $pct <= 0 ) {
+		return round( $web, 2 );
+	}
+	return (float) round( $web * ( 1 - $pct / 100 ) );
 }
 
 /**

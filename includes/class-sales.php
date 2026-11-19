@@ -317,14 +317,38 @@ class KOP_Sales {
         $lines    = array();
         $subtotal = 0.0;
         $qty_by_product = array();
+        $changes  = array(); // productos cuyo precio cambió desde que se cargaron en el carrito
         foreach ( $data['items'] as $item ) {
             $product_id = isset( $item['id'] ) ? absint( $item['id'] ) : 0;
             $qty        = isset( $item['qty'] ) ? (int) $item['qty'] : 0;
-            $price      = isset( $item['price'] ) ? max( 0, (float) $item['price'] ) : 0;
             $line_pct   = isset( $item['discount_pct'] ) ? min( 100, max( 0, (float) $item['discount_pct'] ) ) : 0;
             $product    = $product_id ? wc_get_product( $product_id ) : false;
             if ( ! $product || $qty < 1 ) {
                 return new WP_Error( 'line', 'Hay una línea inválida en la venta.' );
+            }
+
+            // Precio: el servidor calcula el precio del local (web - descuento) con el precio ACTUAL de WooCommerce.
+            //   - Si el cajero editó el precio a mano (price != ref_price), se respeta lo que escribió.
+            //   - Si no lo editó y el precio de WooCommerce cambió desde que lo agregó (ref_price), no se guarda:
+            //     se avisa y el carrito se actualiza con el precio nuevo para que el cajero confirme.
+            $web   = kop_inv_web_price( $product );
+            $local = kop_inv_local_price( $web );
+            $sent  = isset( $item['price'] ) && is_numeric( $item['price'] ) ? max( 0, round( (float) $item['price'], 2 ) ) : $local;
+            $ref   = isset( $item['ref_price'] ) && is_numeric( $item['ref_price'] ) ? round( (float) $item['ref_price'], 2 ) : null;
+
+            if ( null === $ref || abs( $sent - $ref ) > 0.004 ) {
+                $price = $sent; // precio editado por el cajero (o pantalla vieja sin ref_price)
+            } elseif ( abs( $ref - $local ) > 0.004 ) {
+                $changes[] = array(
+                    'id'    => $product_id,
+                    'name'  => wp_strip_all_tags( $product->get_name() ),
+                    'old'   => $ref,
+                    'price' => $local,
+                    'web'   => round( $web, 2 ),
+                );
+                $price = $local;
+            } else {
+                $price = $local;
             }
             $qty_by_product[ $product_id ] = ( isset( $qty_by_product[ $product_id ] ) ? $qty_by_product[ $product_id ] : 0 ) + $qty;
             if ( $product->managing_stock() && ! $product->backorders_allowed() && $product->get_stock_quantity() < $qty_by_product[ $product_id ] ) {
@@ -343,6 +367,14 @@ class KOP_Sales {
             );
         }
  
+        if ( $changes ) {
+            return new WP_Error(
+                'price_changed',
+                'Cambió el precio de ' . ( 1 === count( $changes ) ? 'un producto' : count( $changes ) . ' productos' ) . ' mientras armabas la venta. El carrito ya tiene los precios nuevos: revisá el total y los pagos y volvé a guardar.',
+                array( 'changes' => $changes )
+            );
+        }
+
         $discount = isset( $data['discount'] ) ? max( 0, (float) $data['discount'] ) : 0;
         $discount = min( $discount, $subtotal );
         $base     = round( $subtotal - $discount, 2 );

@@ -30,7 +30,8 @@ class KOP_Admin_Menu {
 		wp_enqueue_script( 'kop-inv', KOP_INV_URL . 'assets/pos.js', array( 'jquery' ), KOP_INV_VERSION, true );
 		wp_localize_script( 'kop-inv', 'kopInv', array(
 			'ajax'  => admin_url( 'admin-ajax.php' ),
-			'nonce' => wp_create_nonce( 'kop_inv' ),
+			'nonce'    => wp_create_nonce( 'kop_inv' ),
+			'discount' => kop_inv_local_discount(),
 		) );
 	}
 

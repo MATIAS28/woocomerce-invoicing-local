@@ -12,8 +12,12 @@
 
     // Variables de configuración global y del estado de la venta
     var cfg = window.kopInv;
-    var items = []; // Almacena los productos en el carrito: {id, name, sku, price, stock, manage, qty, discountPct}
-    var timer = null; // Temporizador para el buscador con retraso (debounce)
+    // Productos en el carrito: {id, name, sku, web, ref, price, stock, manage, qty, discountPct}
+    //   web   = precio de la web (WooCommerce), se muestra tachado
+    //   ref   = precio del local que dio el sistema al agregarlo (web - descuento)
+    //   price = precio que se cobra (igual a ref, salvo que el cajero lo edite)
+    var items = [];
+    var timer = null; // Temporizador de la búsqueda en el servidor (respaldo)
 
     // Token anti-duplicado: se reutiliza si hay que reintentar la misma venta.
     function newToken() {
@@ -67,27 +71,139 @@
      * SECCIÓN 1: BÚSQUEDA Y AUTOCOMPLETADO DE PRODUCTOS
      * ======================================================================== */
 
+    /* --- Catálogo local: se descarga una vez y se busca en el navegador (instantáneo) --- */
+    var catalog = [];      // productos preparados para buscar
+    var byId = {};         // id => producto del catálogo
+    var bySku = {};        // sku normalizado => producto (lector de códigos)
+    var catalogReady = false;
+    var shown = [];        // resultados visibles en la lista
+    var active = -1;       // resultado marcado con las flechas
+    var searchXhr = null;  // búsqueda en el servidor en curso
+    var searchSeq = 0;     // descarta respuestas viejas que lleguen tarde
+    var $status = $('#kop-catalog-status');
+
+    /** Minúsculas y sin acentos: "Teclado Logitech Inalámbrico" => "teclado logitech inalambrico". */
+    function norm(s) {
+        s = String(s || '').toLowerCase();
+        return s.normalize ? s.normalize('NFD').replace(/[̀-ͯ]/g, '') : s;
+    }
+
+    function tokensOf(term) {
+        var seen = {};
+        return norm(term).split(/[^a-z0-9]+/).filter(function (t) {
+            if (!t || seen[t]) { return false; }
+            seen[t] = true;
+            return true;
+        }).slice(0, 6);
+    }
+
+    /** Prepara un producto (del catálogo o de la búsqueda en el servidor) y lo indexa. */
+    function indexProduct(p) {
+        p.web = Number(p.web) || 0;
+        p.price = Number(p.price) || 0;
+        p.nameN = norm(p.name);
+        p.skuN = $.trim(norm(p.sku));
+        var text = p.nameN + ' ' + p.skuN + ' ' + norm(p.cats);
+        // También sin separadores: "usbc" encuentra "USB-C".
+        p.hay = text + ' ' + text.replace(/[^a-z0-9]/g, '');
+        if (byId[p.id]) {
+            $.extend(byId[p.id], p);
+        } else {
+            byId[p.id] = p;
+            catalog.push(p);
+        }
+        if (p.skuN) { bySku[p.skuN] = byId[p.id]; }
+        return byId[p.id];
+    }
+
+    function setStatus() {
+        if (!catalogReady) { return; }
+        var d = new Date();
+        var hh = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+        $status.empty().append(
+            document.createTextNode(catalog.length + ' productos' +
+                (cfg.discount > 0 ? ' · precio local: web −' + String(cfg.discount).replace('.', ',') + '%' : '') +
+                ' · actualizado ' + hh + ' · '),
+            $('<a href="#" id="kop-catalog-reload">').text('Actualizar catálogo')
+        );
+    }
+
+    function loadCatalog() {
+        $status.text('Cargando catálogo…');
+        $.get(cfg.ajax, { action: 'kop_catalog', nonce: cfg.nonce }).done(function (r) {
+            if (!r || !r.success) { $status.text('No se pudo cargar el catálogo: se busca en el servidor.'); return; }
+            catalog = []; byId = {}; bySku = {};
+            r.data.products.forEach(indexProduct);
+            cfg.discount = Number(r.data.discount) || 0;
+            catalogReady = true;
+            setStatus();
+            // Si el cajero ya escribió algo mientras cargaba, se muestra el resultado.
+            var term = $.trim($q.val());
+            if (term.length >= 2 && document.activeElement === $q[0]) { showResults(localSearch(term)); }
+        }).fail(function () {
+            $status.text('No se pudo cargar el catálogo: se busca en el servidor. ').append(
+                $('<a href="#" id="kop-catalog-reload">').text('Reintentar'));
+        });
+    }
+
+    $(document).on('click', '#kop-catalog-reload', function (e) { e.preventDefault(); loadCatalog(); });
+
     /**
-     * Realiza una petición AJAX al servidor para buscar productos por SKU o nombre.
-     * @param {string} term - Texto de búsqueda ingresado por el cajero.
-     * @param {auto} auto - Booleano que indica si se debe añadir automáticamente al carrito si hay coincidencia exacta.
+     * Busca en el catálogo local. Primero los que tienen TODAS las palabras; si no hay, los que tienen
+     * alguna. Orden: SKU exacto, cantidad de palabras, empieza con la primera palabra, nombre más corto.
      */
-    function search(term, auto) {
-        $.get(cfg.ajax, { action: 'kop_search', nonce: cfg.nonce, term: term }).done(function (r) {
-            if (!r || !r.success) { return; }
-            var list = r.data;
-            console.log('KOP RESPONSE:', r);
+    function localSearch(term) {
+        var tokens = tokensOf(term);
+        if (!tokens.length) { return []; }
+        var exactSku = $.trim(norm(term));
+        var first = tokens[0];
+        var all = [], some = [];
+
+        for (var i = 0; i < catalog.length; i++) {
+            var p = catalog[i], m = 0;
+            for (var k = 0; k < tokens.length; k++) {
+                if (p.hay.indexOf(tokens[k]) !== -1) { m++; }
+            }
+            if (!m) { continue; }
+            var hit = {
+                p: p,
+                m: m,
+                exact: p.skuN !== '' && p.skuN === exactSku ? 1 : 0,
+                starts: (p.nameN.indexOf(first) === 0 || p.skuN.indexOf(first) === 0) ? 1 : 0
+            };
+            (m === tokens.length ? all : some).push(hit);
+        }
+
+        var list = all.length ? all : some;
+        list.sort(function (a, b) {
+            return (b.exact - a.exact) || (b.m - a.m) || (b.starts - a.starts) ||
+                (a.p.name.length - b.p.name.length) || (a.p.nameN < b.p.nameN ? -1 : a.p.nameN > b.p.nameN ? 1 : 0);
+        });
+        return list.slice(0, 15).map(function (h) { return h.p; });
+    }
+
+    /**
+     * Respaldo: busca en el servidor (catálogo cargando o producto nuevo que todavía no está en el catálogo).
+     * @param {boolean} auto - con Enter: si hay una coincidencia clara se agrega directo.
+     */
+    function serverSearch(term, auto) {
+        var seq = ++searchSeq;
+        if (searchXhr) { searchXhr.abort(); }
+        searchXhr = $.get(cfg.ajax, { action: 'kop_search', nonce: cfg.nonce, term: term }).done(function (r) {
+            if (seq !== searchSeq || !r || !r.success) { return; }
+            if ($.trim($q.val()) !== term) { return; } // el cajero ya escribió otra cosa
+            var list = r.data.map(indexProduct);
             if (auto && list.length) {
-                var exact = list[0].sku && list[0].sku.toLowerCase() === term.toLowerCase();
-                if (list.length === 1 || exact) {
-                    addItem(list[0]);
-                    $q.val('');
-                    $results.hide().empty();
-                    return;
-                }
+                var exact = list[0].skuN && list[0].skuN === $.trim(norm(term));
+                if (list.length === 1 || exact) { pick(list[0]); return; }
             }
             showResults(list);
         });
+    }
+
+    function stockLabel(p) {
+        if (!p.manage) { return ''; }
+        return p.stock > 0 ? ' · stock ' + p.stock : ' · sin stock';
     }
 
     /**
@@ -95,38 +211,61 @@
      * @param {Array} list - Lista de productos encontrados.
      */
     function showResults(list) {
+        shown = list;
+        active = -1;
         $results.empty();
         if (!list.length) {
             $results.append($('<li class="kop-no-results">').text('Sin resultados')).show();
             return;
         }
-        list.forEach(function (p) {
-            var stock = p.manage ? ' · stock ' + p.stock : '';
-            
-            var $li = $('<li class="kop-result">').append(
+        list.forEach(function (p, i) {
+            var $meta = $('<small class="kop-result__meta">');
+            if (p.sku) { $meta.append(document.createTextNode(p.sku + ' · ')); }
+            if (p.web > p.price) { $meta.append($('<del class="kop-web-price">').text(fmt(p.web)), ' '); }
+            $meta.append($('<b>').text(fmt(p.price)), document.createTextNode(stockLabel(p)));
+
+            var $li = $('<li class="kop-result">').attr('data-i', i).append(
                 $('<img class="kop-result__img">')
                     .attr('src', p.img || '')
-                    .attr('alt', p.name)
+                    .attr('alt', '')
                     .attr('loading', 'lazy'),
                 $('<div class="kop-result__body">').append(
                     $('<b class="kop-result__name">').text(p.name),
-                    $('<small class="kop-result__meta">').text(
-                        (p.sku ? p.sku + ' · ' : '') + fmt(p.price) + stock
-                    )
+                    $meta
                 )
             );
 
-
-            // Evento al hacer clic en un producto de la lista para agregarlo al carrito
+            // Clic en un producto de la lista: se agrega al carrito
             $li.on('mousedown', function (e) {
                 e.preventDefault();
-                addItem(p);
-                $q.val('').focus();
-                $results.hide().empty();
+                pick(p);
             });
             $results.append($li);
         });
         $results.show();
+    }
+
+    function setActive(i) {
+        if (!shown.length) { return; }
+        active = (i + shown.length) % shown.length;
+        var $items = $results.children('.kop-result').removeClass('is-active');
+        var el = $items.eq(active).addClass('is-active')[0];
+        if (el && el.scrollIntoView) { el.scrollIntoView({ block: 'nearest' }); }
+    }
+
+    function hideResults() {
+        shown = [];
+        active = -1;
+        $results.hide().empty();
+    }
+
+    /** Agrega el producto elegido y deja el buscador listo para el siguiente. */
+    function pick(p) {
+        clearTimeout(timer);
+        searchSeq++; // descarta búsquedas en curso
+        addItem(p);
+        $q.val('').focus();
+        hideResults();
     }
 
     /**
@@ -134,13 +273,17 @@
      * @param {Object} p - Datos del producto.
      */
     function addItem(p) {
-        var qty = 1
-        
+        var qty = 1;
+
         var existing = items.filter(function (i) { return i.id === p.id; })[0];
         if (existing) {
             existing.qty += qty;
         } else {
-            items.push({ id: p.id, img: p.img, name: p.name, sku: p.sku || '', price: p.price, stock: p.stock, manage: p.manage, qty: qty, discountPct: 0 });
+            items.push({
+                id: p.id, img: p.img, name: p.name, sku: p.sku || '',
+                web: Number(p.web) || 0, ref: Number(p.price) || 0, price: Number(p.price) || 0,
+                stock: p.stock, manage: p.manage, qty: qty, discountPct: 0
+            });
         }
 
         render();
@@ -192,8 +335,11 @@ function render() {
 
         // Cantidad
         $tr.append($('<td>').append($('<input type="number" min="1" step="1" data-f="qty">').val(it.qty)));
-        // Precio
-        $tr.append($('<td>').append($('<input type="number" min="0" step="0.01" data-f="price">').val(it.price)));
+        // Precio (editable). Arriba, el precio de la web tachado.
+        var $price = $('<td class="kop-price-cell">');
+        if (it.web > it.ref) { $price.append($('<del class="kop-web-price">').attr('title', 'Precio web').text(fmt(it.web))); }
+        $price.append($('<input type="number" min="0" step="0.01" data-f="price">').val(it.price));
+        $tr.append($price);
         // Descuento
         $tr.append($('<td>').append($('<input type="number" min="0" max="100" step="0.01" data-f="discountPct">').val(it.discountPct)));
         // Total línea
@@ -431,22 +577,48 @@ function render() {
      * SECCIÓN 4: EVENTOS DEL BUSCADOR Y ATAJOS DE TECLADO
      * ======================================================================== */
 
-    // Búsqueda con retraso (debounce) al escribir en el campo de código/nombre
+    // Búsqueda al escribir: en el catálogo local es instantánea; el servidor solo se usa de respaldo.
     $q.on('input', function () {
         clearTimeout(timer);
+        searchSeq++;
         var term = $.trim($q.val());
-        if (term.length < 2) { $results.hide().empty(); return; }
-        timer = setTimeout(function () { search(term, false); }, 250);
+        if (term.length < 2) { hideResults(); return; }
+        if (catalogReady) {
+            var list = localSearch(term);
+            if (list.length) { showResults(list); return; }
+        }
+        timer = setTimeout(function () { serverSearch(term, false); }, 250);
     });
 
-    // Añadir producto con la tecla Enter en el buscador
+    // Flechas para moverse por los resultados, Enter para agregar, Escape para cerrar.
     $q.on('keydown', function (e) {
-        if (e.key === 'Enter') {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+            if (!shown.length) { return; }
             e.preventDefault();
-            clearTimeout(timer);
-            var term = $.trim($q.val());
-            if (term.length >= 2) { search(term, true); }
+            setActive(active + (e.key === 'ArrowDown' ? 1 : -1));
+            return;
         }
+        if (e.key === 'Escape') { hideResults(); return; }
+        if (e.key !== 'Enter') { return; }
+
+        e.preventDefault();
+        clearTimeout(timer);
+        var term = $.trim($q.val());
+
+        if (active >= 0 && shown[active]) { pick(shown[active]); return; }
+        if (term.length < 1) { return; }
+
+        // Lector de códigos: SKU exacto.
+        var bySkuHit = bySku[$.trim(norm(term))];
+        if (bySkuHit) { pick(bySkuHit); return; }
+        if (term.length < 2) { return; }
+
+        if (catalogReady) {
+            var list = localSearch(term);
+            if (list.length === 1) { pick(list[0]); return; }
+            if (list.length) { showResults(list); return; }
+        }
+        serverSearch(term, true);
     });
 
     $q.on('blur', function () { setTimeout(function () { $results.hide(); }, 150); });
@@ -504,7 +676,7 @@ function render() {
             notes: $('#kop-notes').val(),
             cash_received: c.change > 0 ? c.handed : 0,
             items: items.map(function (i) {
-                return { id: i.id, qty: i.qty, price: i.price, discount_pct: i.discountPct };
+                return { id: i.id, qty: i.qty, price: i.price, ref_price: i.ref, discount_pct: i.discountPct };
             })
         };
 
@@ -669,6 +841,12 @@ function render() {
                     // Restablecer formulario y carrito.
                     $('#kop-type').val('X').trigger('change');
 
+                    // El catálogo local refleja el stock vendido (el servidor lo vuelve a controlar al guardar).
+                    items.forEach(function (it) {
+                        var cp = byId[it.id];
+                        if (cp && cp.manage && cp.stock !== null) { cp.stock -= it.qty; }
+                    });
+
                     items = [];
 
                     $('#kop-customer').val('Consumidor Final');
@@ -690,7 +868,11 @@ function render() {
                         actionTab.close();
                     }
 
-                    notice((r && r.data) ? r.data : 'No se pudo guardar la venta.');
+                    if (r && r.data && r.data.changes) {
+                        applyPriceChanges(r.data.message, r.data.changes);
+                    } else {
+                        notice((r && r.data) ? r.data : 'No se pudo guardar la venta.');
+                    }
                 }
             })
 
@@ -713,6 +895,31 @@ function render() {
                 $('#kop-save').text('Guardar venta (F6)');
                 updateTotals();
             });
+    }
+
+    /**
+     * El servidor detectó precios distintos a los del carrito: se actualizan el carrito y el catálogo
+     * y se avisa qué cambió. La venta NO se guardó; el cajero revisa los pagos y vuelve a guardar.
+     */
+    function applyPriceChanges(message, changes) {
+        var $list = $('<ul class="kop-price-changes">');
+        changes.forEach(function (ch) {
+            var id = Number(ch.id);
+            items.forEach(function (it) {
+                if (it.id === id) {
+                    it.ref = Number(ch.price) || 0;
+                    it.price = it.ref;
+                    it.web = Number(ch.web) || 0;
+                }
+            });
+            if (byId[id]) {
+                byId[id].price = Number(ch.price) || 0;
+                byId[id].web = Number(ch.web) || 0;
+            }
+            $list.append($('<li>').text(ch.name + ': ' + fmt(ch.old) + ' → ' + fmt(ch.price)));
+        });
+        render();
+        notice($('<div>').text(message).html() + $('<div>').append($list).html(), 'warning');
     }
 
     // Control dinámico de campos obligatorios u opcionales según el tipo de comprobante (X o C)
@@ -738,4 +945,5 @@ function render() {
 
     // Inicialización del POS al cargar la página
     render();
+    loadCatalog();
 })(jQuery);

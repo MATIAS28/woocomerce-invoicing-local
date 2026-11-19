@@ -439,3 +439,25 @@
     color: #b32d2e;
     text-align: center;
 }
+/* --- Precio local vs. precio web y catálogo --- */
+.kop-web-price {
+    color: #8c8f94;
+    font-size: 11px;
+    font-weight: 400;
+}
+
+.kop-price-cell .kop-web-price {
+    display: block;
+    margin-bottom: 2px;
+}
+
+.kop-catalog-status {
+    margin: 4px 0 8px;
+    font-size: 12px;
+    color: #646970;
+}
+
+.kop-price-changes {
+    margin: 4px 0 0 18px;
+    list-style: disc;
+}

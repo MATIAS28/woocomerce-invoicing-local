@@ -35,6 +35,7 @@ class KOP_Settings {
             'logo_url'        => esc_url_raw( isset( $in['logo_url'] ) ? $in['logo_url'] : '' ),
             'invoice_status'  => ( isset( $in['invoice_status'] ) && in_array( $in['invoice_status'], array( 'processing', 'completed' ), true ) ) ? $in['invoice_status'] : 'completed',
             'crp_tax_id_key'  => sanitize_text_field( isset( $in['crp_tax_id_key'] ) ? $in['crp_tax_id_key'] : '' ),
+            'local_discount'  => min( 90, max( 0, kop_inv_parse_amount( isset( $in['local_discount'] ) ? $in['local_discount'] : 0 ) ) ),
         );
     }
 
